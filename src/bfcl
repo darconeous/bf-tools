@@ -1,0 +1,15 @@
+#!/bin/sh
+
+INFILE=$1
+OUTFILE=$2
+
+CC=gcc
+CFLAGS=-O3
+BF2C=bf2c
+
+TEMPFILE=temp.c
+
+$BF2C $INFILE -o $TEMPFILE &&
+$CC $CFLAGS $TEMPFILE -o $OUTFILE &&
+rm $TEMPFILE
+
