@@ -19,7 +19,7 @@
 #define DEFAULT_MASK			(0xFFFFFFFF)	// 32-bit
 
 #define MAX_PROG_SIZE			(65536*8)
-#define MAX_DATA_SIZE			(65536)
+#define MAX_DATA_SIZE			(65536*8)
 #define MAX_DEPTH				(1024)
 
 #define ERROR_FILE				(-1)
@@ -42,7 +42,7 @@
 #define INST_INC_DATA			'>'
 #define INST_SLEEP				's'
 
-#define	SLEEP_MULTIPLIER		(0.05)
+#define	SLEEP_MULTIPLIER		(sleep_multiplier)
 
 /* TYPES */
 
@@ -57,6 +57,7 @@ typedef struct bfop
 
 unsigned int data_mask=DEFAULT_MASK;
 int print_bfops_at_exit=0;
+double sleep_multiplier=0.05;
 
 /* FUNCTIONS */
 
@@ -441,7 +442,8 @@ void print_help()
 		{ "-8", "Use 8-bit data" },
 		{ "-c", "Convert BF program to C" },
 		{ "-p", "Print out bfops at exit" },
-		
+		{ "-l", "If data pointer points to zero on exit, loop" },
+		{ "-s", "Set sleep multiplier (Default=0.05)" },
 		{ NULL }
 	};
 	int i;
@@ -474,6 +476,7 @@ main(int argc, char* argv[])
 	int bf2c_mode=0;
 	int i;
 	int file_count=0;
+	int loop=0;
 	
 	/*
  --	** -- P R O C E S S   A R G U M E N T S -------------------------------------------------------
@@ -542,6 +545,9 @@ main(int argc, char* argv[])
 					case 'c':
 						bf2c_mode=1;
 						break;
+					case 'l':
+						loop=1;
+						break;
 					case 'o':
 						if(argv[i+1])
 						{
@@ -552,6 +558,20 @@ main(int argc, char* argv[])
 								return ERROR_FILE;		
 							}
 							i++;
+						}
+						else
+						{
+							fprintf(stderr,"error: Missing argument to '-%c'\n",argv[ii][j]);
+							return ERROR_BAD_ARG;
+						}
+						break;
+					case 's':
+						if(argv[i+1])
+						{
+							float sm=strtof(argv[++i],NULL);
+							//float sm=strtof("0.02",NULL);i++;
+							fprintf(stderr,"info: sleep_multiplier=%f (should be '%s')\n",sm,argv[i]);
+							sleep_multiplier=sm;
 						}
 						else
 						{
@@ -731,5 +751,10 @@ main(int argc, char* argv[])
 		return 0;
 	}
 	
-	return execute(prog,prog+pc,in,out);
+	{
+		int ret=0;
+		do { ret=execute(prog,prog+pc,in,out); }
+		while(loop && !ret);
+		return ret;
+	}
 }
