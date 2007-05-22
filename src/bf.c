@@ -322,6 +322,123 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 	return data[di];
 }
 
+int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
+{
+	unsigned int data[65535]={0};
+	unsigned int stack[1024]={0};
+	unsigned int depth=0;			// Depth tracker
+	unsigned int pc=0;				// Program counter
+	unsigned int di=0;				// data index
+	bfop* prog=begin;
+
+	while(prog[pc].op)
+	{
+		switch(prog[pc].op)
+		{
+			case INST_SET_CONST:
+				data[di+prog[pc].arg2]=prog[pc].count;
+				break;
+
+			case INST_SLEEP:
+				{
+					const int c=clock();
+					usleep((int)(prog[pc].count*data[di]*SLEEP_MULTIPLIER));
+				}
+				data[di+prog[pc].arg2]=0;
+
+				break;
+
+			case INST_SEEK_NZERO:
+				while(data[di])
+				{
+					if(di>=MAX_DATA_SIZE-(prog[pc].count))
+					{
+						fprintf(stderr,"error: Data pointer overflow (prog[pc].count=%d)\n",prog[pc].count);
+						return ERROR_DATA_OVERFLOW;
+					}
+					else
+					if((signed)di<-prog[pc].count)
+					{
+						fprintf(stderr,"error: Data pointer underflow on INST_SEEK_NZERO (prog[pc].count=%d)\n",prog[pc].count);
+						return ERROR_DATA_UNDERFLOW;
+					}
+					di+=prog[pc].count;
+				}
+
+				break;
+
+			case INST_ADD_DATA:
+				if(di>=MAX_DATA_SIZE-(prog[pc].arg2))
+				{
+					fprintf(stderr,"error: Data pointer overflow\n");
+					return ERROR_DATA_OVERFLOW;
+				}
+				else
+				if((signed)di<-prog[pc].arg2)
+				{
+					pc++;
+					continue;
+					
+					fprintf(stderr,"error: Data pointer underflow on INST_ADD_DATA\n");
+					return ERROR_DATA_UNDERFLOW;
+				}
+				
+				data[di+prog[pc].arg2]+=data[di]*(prog[pc].count);
+				break;
+
+			case '+':
+				data[di]+=prog[pc].count;
+				break;
+				
+			case '>':
+				if(di>=MAX_DATA_SIZE-(prog[pc].count))
+				{
+					fprintf(stderr,"error: Data pointer overflow (prog[pc].count=%d)\n",prog[pc].count);
+					return ERROR_DATA_OVERFLOW;
+				}
+				else
+				if((signed)di<-prog[pc].count)
+				{
+					fprintf(stderr,"error: Data pointer underflow on '>' (prog[pc].count=%d)\n",prog[pc].count);
+					return ERROR_DATA_UNDERFLOW;
+				}
+				di+=prog[pc].count;
+				break;
+
+			case ',':
+				{
+					const int val=fgetc(in);
+					
+					// No change on EOF
+					if(val!=EOF)
+						data[di]=val;
+				}
+				break;
+				
+			case '.':
+				fputc(data[di],out);
+				fflush(out);
+				break;
+				
+			case '[':
+				if(!(data[di]&data_mask))
+					pc=prog[pc].arg2;
+				break;
+				
+			case ']':
+				if(data[di]&data_mask)
+				{
+					pc=prog[pc].arg2;
+				}
+				break;
+		}
+		pc++;
+	}
+
+	// Return value under data pointer
+	return data[di];
+}
+
 void convert2c(bfop* begin, bfop* end, FILE* out)
 {
 	bfop* prog=begin;
@@ -753,8 +870,10 @@ main(int argc, char* argv[])
 	
 	{
 		int ret=0;
-		do { ret=execute(prog,prog+pc,in,out); }
-		while(loop && !ret);
+		if(print_bfops_at_exit)
+			do { ret=execute(prog,prog+pc,in,out); } while(loop && !ret);
+		else
+			do { ret=execute_fast(prog,prog+pc,in,out); } while(loop && !ret);
 		return ret;
 	}
 }
