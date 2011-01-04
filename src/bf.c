@@ -59,6 +59,8 @@ typedef struct bfop
 unsigned int data_mask=DEFAULT_MASK;
 int print_bfops_at_exit=0;
 double sleep_multiplier=0.05;
+#define NO_CHANGE_ON_EOF	(1<<30)
+int eof_character = NO_CHANGE_ON_EOF;
 
 /* FUNCTIONS */
 
@@ -270,9 +272,17 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 					const int val=fgetc(in);
 					time_start+=clock()-c;
 					
-					// No change on EOF
-					if(val!=EOF)
+					if(val!=EOF) {
 						data[di]=val;
+					} else {
+						if(eof_character != NO_CHANGE_ON_EOF)
+							data[di]=eof_character;
+
+						// No change on EOF
+						// If out input wasn't stdin already, go ahead and start using stdin.
+						if(in!=stdin)
+							in = stdin;
+					}
 				}
 				break;
 				
@@ -410,9 +420,17 @@ int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
 				{
 					const int val=fgetc(in);
 					
-					// No change on EOF
-					if(val!=EOF)
+					if(val!=EOF) {
 						data[di]=val;
+					} else {
+						if(eof_character != NO_CHANGE_ON_EOF)
+							data[di]=eof_character;
+
+						// No change on EOF
+						// If out input wasn't stdin already, go ahead and start using stdin.
+						if(in!=stdin)
+							in = stdin;
+					}
 				}
 				break;
 				
@@ -563,6 +581,7 @@ void print_help()
 		{ "-p", "Print out bfops at exit" },
 		{ "-l", "If data pointer points to zero on exit, loop" },
 		{ "-s", "Set sleep multiplier (Default=0.05)" },
+		{ "-e", "Set EOF character value. Argument is an integer. (Default=no change)" },
 		{ NULL }
 	};
 	int i;
@@ -677,6 +696,17 @@ main(int argc, char* argv[])
 								return ERROR_FILE;		
 							}
 							i++;
+						}
+						else
+						{
+							fprintf(stderr,"error: Missing argument to '-%c'\n",argv[ii][j]);
+							return ERROR_BAD_ARG;
+						}
+						break;
+					case 'e':
+						if(argv[i+1]) {
+							i++;
+							eof_character=strtol(argv[i],NULL,0);
 						}
 						else
 						{
