@@ -5,10 +5,10 @@ PREFIX=$(prefix)
 
 INSTALL=install
 LN=ln -s -f
-CFLAGS=-O3 -DNDEBUG -g
+CFLAGS=-O0 -DNDEBUG -g
 CXXFLAGS=$(CFLAGS)
 
-all: bf bf2c str2bf bfstrip sbfi bfprof
+all: bf str2bf bfstrip sbfi bfprof
 
 bf: bf.c
 

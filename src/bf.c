@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 
 #define PRINT_BFOPS_AT_EXIT		(1)
 //#define DISABLE_OPTIMIZATION	(1)
@@ -454,7 +455,7 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 		datatype="int";
 	
 	fprintf(out,
-		"/* Created using bf2c from bftools-0.1\n** darcoATdeepdarcDOTcom\n*/\n" 
+		"/* Created using bf2c from bftools-0.1\n** http://www.deepdarc.com/bf/\n*/\n" 
 		"#include <stdio.h>\n\n"
 		"int main(int argc, char* argv[])\n{\n"
 		"\t%s data[65536]={0};\n"
@@ -557,6 +558,7 @@ void print_help()
 		{ "--8-bit", "Use 8-bit data" },
 		{ "--16-bit", "Use 16-bit data" },
 		{ "-8", "Use 8-bit data" },
+		{ "-7", "Use 7-bit data" },
 		{ "-c", "Convert BF program to C" },
 		{ "-p", "Print out bfops at exit" },
 		{ "-l", "If data pointer points to zero on exit, loop" },
@@ -671,7 +673,7 @@ main(int argc, char* argv[])
 							out=fopen(argv[i+1],"w");
 							if(!out)
 							{
-								fprintf(stderr,"error: Unable to open \"%s\" for write access\n",argv[3]);
+								fprintf(stderr,"error: Unable to open \"%s\" for write access\n",argv[i+1]);
 								return ERROR_FILE;		
 							}
 							i++;
@@ -685,10 +687,13 @@ main(int argc, char* argv[])
 					case 's':
 						if(argv[i+1])
 						{
-							float sm=strtof(argv[++i],NULL);
-							//float sm=strtof("0.02",NULL);i++;
-							fprintf(stderr,"info: sleep_multiplier=%f (should be '%s')\n",sm,argv[i]);
-							sleep_multiplier=sm;
+							sleep_multiplier=strtod(argv[i+1],NULL);
+							if(sleep_multiplier < 0.0f)
+								sleep_multiplier=0.0f;
+							if(sleep_multiplier > 0.5f)
+								sleep_multiplier=0.5f;
+							fprintf(stderr,"info: sleep_multiplier=%f (should be '%s')\n",sleep_multiplier,argv[i+1]);
+							i++;
 						}
 						else
 						{
