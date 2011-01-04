@@ -27,7 +27,7 @@ check: bf str2bf
 	./bf ../examples/yapi.bf
 	./bf ../examples/wc.bf bf.c
 
-install: bf bf2c str2bf bfstrip
+install: all
 	$(INSTALL) bf $(PREFIX)
 	$(INSTALL) sbfi $(PREFIX)
 	$(LN) $(PREFIX)/bf $(PREFIX)/bf8
