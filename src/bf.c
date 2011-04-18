@@ -1,6 +1,6 @@
 /* bf.c -- Optimizing BrainFuck Interpreter
 **
-** Written by Robert Quattlebaum Jr. <darco@deepdarc.com>
+** Written by Robert Quattlebaum <darco@deepdarc.com>
 **
 ** This program is licensed under the terms of the GNU GPL.
 ** See http://www.fsf.org/ for more details.

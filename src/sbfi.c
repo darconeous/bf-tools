@@ -1,6 +1,6 @@
 /* sbfi.c -- Simple Reference BrainFuck Interpreter
 **
-** Written by Robert Quattlebaum Jr. <darco@deepdarc.com>
+** Written by Robert Quattlebaum <darco@deepdarc.com>
 ** This program can be considered PUBLIC DOMAIN.
 **
 ** This interpreter assumes no-change on EOF.
