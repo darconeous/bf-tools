@@ -80,9 +80,14 @@ void calculate_pool(char* pool, int poolsize, const string& str)
 		string tmp(str);
 		sort(tmp.begin(),tmp.end());
 
+		if(str.size()>=poolsize) {
+			for(int i=0;i<str.size();i++)
+				pool[i]=str[i];
+			return;
+		}
 		int range(tmp[tmp.size()-1]-tmp[0]);
 		int std_dev(tmp[(tmp.size()-1)*2/3]-tmp[(tmp.size()-1)/3]);
-		int threshold((8*range/std_dev)*1/(poolsize-3));
+		int threshold((8*range/(std_dev?std_dev:1))*1/((poolsize>3)?poolsize-3:1));
 
 		//fprintf(stderr,"range=%d\n",range);
 		//fprintf(stderr,"std_dev=%d\n",std_dev);
@@ -171,6 +176,9 @@ string str2bf(const string& str)
 	int poolsize(12);
 	
 	int cur_pos=0;
+	if(str.size()<2) {
+		return str2bf2(str);
+	} else
 	if(str.size()<5)
 		poolsize=2;
 	else
