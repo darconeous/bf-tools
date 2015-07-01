@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
+#include <string.h>
 
 //#define PRINT_BFOPS_AT_EXIT		(1)
 
@@ -252,7 +253,7 @@ main(int argc, char* argv[])
 	time_start=clock();
 
 	if(!output_optimized_code)
-		fprintf(stdout,"<html><body><h1>output</h1><pre style='font-size: -1'>\n");
+		fprintf(stdout,"<html><body><h1>output</h1><pre style='font-size: -1; background-color: black; color: #CCC;'>\n");
 	
 	while(prog[pc])
 	{
@@ -300,8 +301,15 @@ main(int argc, char* argv[])
 			case '.':
 				if(!output_optimized_code)
 				{
-				fputc(data[di],out);
-				fflush(out);
+					char c = data[di];
+					if(c == '<') {
+						fprintf(out,"&lt;");
+					} else if(c == '&') {
+						fprintf(out,"&amp;");
+					} else if(c && c != '\r') {
+						fputc(data[di],out);
+					}
+					fflush(out);
 				}
 				break;
 				
@@ -370,7 +378,7 @@ main(int argc, char* argv[])
 	{
 	int line_no=0;
 	fprintf(stdout,"</pre><hr /><h1>profiled code</h1><tt>\n");
-				fprintf(stdout,"<br />\n<b>%4d: </b>",++line_no);
+				fprintf(stdout,"<br />\n<b>%04d: </b>",++line_no);
 	int last_amount=-1;
 	for(pc=0;prog[pc];pc++)
 	{
@@ -385,7 +393,7 @@ main(int argc, char* argv[])
 		switch(prog[pc])
 		{
 			case '\n':
-				fprintf(stdout,"<br />\n<b>%4d: </b>",++line_no);
+				fprintf(stdout,"<br />\n<b>%04d: </b>",++line_no);
 				break;
 			case ' ':
 				if(!pc || prog[pc-1]==' '|| prog[pc-1]=='\n'|| prog[pc-1]=='\t')
@@ -416,12 +424,15 @@ main(int argc, char* argv[])
 						fprintf(stdout,"&gt;");
 					else
 					if(prog[pc]=='<')
-						fprintf(stdout,"&lt;", prog[pc]);
+						fprintf(stdout,"&lt;");
 					else
 						fprintf(stdout,"%c", prog[pc]);
 					last_amount=amount;
 					break;
 				}
+			case 0:
+			case -1:
+				break;
 			default:
 				amount=-1;
 				if(amount!=last_amount)
