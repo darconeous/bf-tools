@@ -2,6 +2,10 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <stdio.h>
+#include <stdlib.h>
+
+static const int max_pool_size = 20;
 
 using namespace std;
 
@@ -73,7 +77,99 @@ string str2bf2(const string& str)
 	return ret;
 }
 
-void calculate_pool(char* pool, int poolsize, const string& str)
+int find_optimal_mult(const char* pool, int poolsize)
+{
+	int mult=16;
+	{
+		int oldval(100000000);
+
+		for(int i=10;i<24;i++)
+		{
+			int newval(0);
+			for(int j=0;j<poolsize;j++)
+				newval+=pool[j]%i+j?0:1;
+
+			if(newval<oldval) mult=i,oldval=newval;
+		}
+	}
+	return mult;
+}
+
+int calc_pool_print_size(const char* pool, int poolsize)
+{
+    int ret = 0;
+	int mult(find_optimal_mult(pool,poolsize));
+
+	ret += (bf_add_value(mult).size()+2);
+	for(int i=0;i<poolsize;i++)
+	{
+		ret+=bf_move_ptr(1).size();
+		ret+=bf_add_value((pool[i]+mult/2)/mult).size();
+	}
+	ret+=bf_move_ptr(-poolsize).size()+1;
+	ret+=bf_move_ptr(1).size();
+
+    return ret;
+}
+
+void calculate_pool2(char* pool, int &poolsize, const string& str)
+{
+	int cur_pos = 0;
+    int cur_pool_size = 0;
+	char temppool[20];
+	string::const_iterator iter;
+    int excess = 0;
+
+    poolsize = 1;
+
+
+    // First value in pool is the first character of the pool.
+    temppool[0] = pool[0] = str[0];
+
+    cur_pool_size = calc_pool_print_size(pool, poolsize);
+
+	for(iter=str.begin();iter!=str.end();++iter)
+	{
+		int newpos = cur_pos;
+
+		// Find closest value
+		for(int i=0;i < poolsize; i++) {
+			if(abs(temppool[i]-*iter)+abs(i-cur_pos)/2 <abs(temppool[newpos]-*iter)) {
+                newpos = i;
+            }
+        }
+
+        if (poolsize < max_pool_size) {
+            const int blah_factor = 30 - poolsize;
+            temppool[poolsize] = pool[poolsize] = *iter;
+            int new_pool_size = calc_pool_print_size(pool, poolsize+1);
+            int cost = abs(pool[newpos]-*iter)+abs(newpos-cur_pos);
+            int pool_size_diff = (new_pool_size-cur_pool_size);
+
+            pool_size_diff += abs(poolsize-cur_pos) + 4 - excess;
+
+//            fprintf(stderr,"'%c': cost = %d; pool_size_diff = %d\n",*iter,cost, pool_size_diff);
+
+            if (cost > pool_size_diff ) {
+//                fprintf(stderr," >>> New slot\n");
+                newpos = poolsize++;
+                excess = 0;
+                cur_pool_size = new_pool_size;
+            } else if (cost > blah_factor) {
+                excess += cost - blah_factor;
+            }
+
+            cur_pos=newpos;
+        }
+
+		temppool[cur_pos]+=*iter-temppool[cur_pos];
+	}
+
+//    fprintf(stderr," ::: Pool Size = %d\n", poolsize);
+}
+
+// This is the old broken pool calculator
+void calculate_pool(char* pool, int &poolsize, const string& str)
 {
 	{
 		// Find pool values
@@ -149,24 +245,6 @@ void calculate_pool(char* pool, int poolsize, const string& str)
 #endif
 }
 
-int find_optimal_mult(char* pool, int poolsize)
-{
-	int mult=16;
-	{
-		int oldval(100000000);
-		
-		for(int i=10;i<24;i++)
-		{
-			int newval(0);
-			for(int j=0;j<poolsize;j++)
-				newval+=pool[j]%i+j?0:1;
-				
-			if(newval<oldval) mult=i,oldval=newval;
-		}
-	}
-	return mult;
-}
-
 string str2bf(const string& str)
 {
 	string ret;
@@ -176,30 +254,31 @@ string str2bf(const string& str)
 	int poolsize(12);
 	
 	int cur_pos=0;
-	if(str.size()<2) {
-		return str2bf2(str);
-	} else
-	if(str.size()<5)
-		poolsize=2;
-	else
-	if(str.size()<10)
-		poolsize=3;
-	else
-	if(str.size()<25)
-		poolsize=4;
-	else
-	if(str.size()<35)
-		poolsize=4;
-	else
-	if(str.size()<40)
-		poolsize=5;
-	else
-		poolsize=5;
-		
-	//poolsize=std::min(2+int(sqrt((float)str.size()*2.0+80))/(415/70),12);
-	
-	calculate_pool(pool,poolsize,str);
-	
+//	if(str.size()<2) {
+//		return str2bf2(str);
+//	} else
+//	if(str.size()<5)
+//		poolsize=2;
+//	else
+//	if(str.size()<10)
+//		poolsize=3;
+//	else
+//	if(str.size()<25)
+//		poolsize=4;
+//	else
+//	if(str.size()<35)
+//		poolsize=4;
+//	else
+//	if(str.size()<40)
+//		poolsize=5;
+//	else
+//		poolsize=5;
+//
+//	poolsize=std::min(2+int(sqrt((float)str.size()*2.0+80))/(415/70),12);
+//
+//	calculate_pool(pool,poolsize,str);
+	calculate_pool2(pool,poolsize,str);
+
 	int mult(find_optimal_mult(pool,poolsize));
 
 	// Output the pool
@@ -228,7 +307,7 @@ string str2bf(const string& str)
 		ret+=bf_add_value_simple(*iter-pool[cur_pos])+'.';
 		pool[cur_pos]+=*iter-pool[cur_pos];
 	}
-	
+
 	string ret2(str2bf2(str));
 	return ret.size()<ret2.size()?ret:ret2;
 }
