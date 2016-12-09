@@ -19,7 +19,7 @@
 //#define DEFAULT_MASK			(0x0000FFFF)	// 16-bit
 #define DEFAULT_MASK			(0xFFFFFFFF)	// 32-bit
 
-#define MAX_PROG_SIZE			(65536*8)
+#define MAX_PROG_SIZE			(65536*4)
 #define MAX_DATA_SIZE			(65536*8)
 #define MAX_DEPTH				(1024)
 
@@ -165,7 +165,7 @@ int optimize(bfop* begin, bfop* end)
 
 int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
-	unsigned int data[65535]={0};
+	unsigned int data[MAX_DATA_SIZE]={0};
 	unsigned int stack[1024]={0};
 //	unsigned int data_mask=DEFAULT_MASK;
 	unsigned int depth=0;			// Depth tracker
@@ -335,7 +335,7 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 
 int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
-	unsigned int data[65535]={0};
+	unsigned int data[MAX_DATA_SIZE]={0};
 	unsigned int stack[1024]={0};
 	unsigned int depth=0;			// Depth tracker
 	unsigned int pc=0;				// Program counter
@@ -464,25 +464,30 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 	int pc=0;
 	const char* datatype;
 	int flush_needed=0;
-	
+
 	if(data_mask<=0xFF)
 		datatype="char";
 	else if(data_mask<=0xFFFF)
 		datatype="short";
 	else
 		datatype="int";
-	
+
 	fprintf(out,
 		"/* Created using bf2c from bftools-0.1\n** http://www.deepdarc.com/bf/\n*/\n" 
-		"#include <stdio.h>\n\n"
+		"#include <stdio.h>\n"
+		"#include <stdlib.h>\n\n"
 		"int main(int argc, char* argv[])\n{\n"
-		"\t%s data[65536]={0};\n"
-		"\t%s* dp=data;\n"
+		"\t%s* data = calloc(sizeof(%s), %d);\n"
+		"\t%s* dp = data;\n"
+		"\n"
+		"\tif (data == NULL) { perror(\"calloc\"); exit(1); }\n"
 		"\n",
 		datatype,
+		datatype,
+		MAX_DATA_SIZE,
 		datatype
 	);
-	
+
 	while(prog[pc].op)
 	{
 		switch(prog[pc].op)
@@ -601,8 +606,8 @@ main(int argc, char* argv[])
 	FILE* progin=stdin;
 	FILE* in=stdin;
 	FILE* out=stdout;
-	bfop prog[65535]={ {0} };
-	unsigned int data[65535]={0};
+	bfop prog[MAX_PROG_SIZE]={ {0} };
+	//unsigned int data[MAX_DATA_SIZE]={0};
 	unsigned int stack[1024]={0};
 	unsigned int depth=0;			// Depth tracker
 	unsigned int pc=0;				// Program counter
