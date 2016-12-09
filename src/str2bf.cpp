@@ -9,6 +9,8 @@ static const int max_pool_size = 20;
 
 using namespace std;
 
+//#define VERBOSE_DEBUG 1
+
 string bf_add_value_simple(int x)
 {
 	string ret;
@@ -35,10 +37,10 @@ string bf_add_value(int x)
 	if(abs(x)==factor)factor++;
 	if(abs(x)==15)factor=5;
 	if(abs(x)==16)factor=4;
-	
+
 	for(i=(x%factor);i>0;i--) ret+='+';
 	for(i=(x%factor);i<0;i++) ret+='-';
-	
+
 	i=(x/factor);
 	if(i)
 	{
@@ -79,24 +81,92 @@ string str2bf2(const string& str)
 
 int find_optimal_mult(const char* pool, int poolsize)
 {
-	int mult=16;
+	int mult=10;
+#if 0
+// OLD VERSION
 	{
 		int oldval(100000000);
 
-		for(int i=10;i<24;i++)
+		for(int i=mult;i<24;i++)
 		{
 			int newval(0);
-			for(int j=0;j<poolsize;j++)
-				newval+=pool[j]%i+j?0:1;
+			for (int j = 0; j < poolsize; j++) {
+				newval += (pool[j] % i) + j
+                    ? 0
+                    : 1;
+            }
 
-			if(newval<oldval) mult=i,oldval=newval;
+			if (newval < oldval) {
+                mult = i;
+                oldval = newval;
+            }
 		}
 	}
 	return mult;
+#elif 0
+// NEW VERISON
+	{
+		int oldval(100000000);
+
+		for(int i=mult;i<24;i++)
+		{
+			int newval(0);
+			for (int j = 0; j < poolsize; j++) {
+				newval += (pool[j] % i)
+                    ? 0
+                    : 1;
+            }
+
+			if (newval < oldval) {
+                mult = i;
+                oldval = newval;
+            }
+		}
+	}
+#endif
+#if VERBOSE_DEBUG
+//    fprintf(stderr,"mult=%d\n",mult);
+#endif
+	return mult;
+}
+
+int pool_decimate(int value, int mult)
+{
+    return (value+mult/2)/mult;
+}
+
+void pool_round(char* pool, int poolsize, int mult)
+{
+	for(int i=0;i<poolsize;i++)
+	{
+		pool[i]=pool_decimate(pool[i],mult);
+		pool[i]*=mult;
+	}
+}
+
+string bf_print_pool(const char* pool, int poolsize, int mult)
+{
+    string ret;
+
+	// Output the pool
+	ret+=bf_add_value(mult)+"[-";
+	for(int i=0;i<poolsize;i++)
+	{
+		ret += bf_move_ptr(1);
+		ret += bf_add_value(pool_decimate(pool[i],mult));
+	}
+	ret+=bf_move_ptr(-poolsize)+"]";
+	ret+=bf_move_ptr(1);
+
+    return ret;
 }
 
 int calc_pool_print_size(const char* pool, int poolsize)
 {
+#if 1
+	int mult(find_optimal_mult(pool,poolsize));
+    return bf_print_pool(pool, poolsize, mult).size();
+#else
     int ret = 0;
 	int mult(find_optimal_mult(pool,poolsize));
 
@@ -110,6 +180,7 @@ int calc_pool_print_size(const char* pool, int poolsize)
 	ret+=bf_move_ptr(1).size();
 
     return ret;
+#endif
 }
 
 void calculate_pool2(char* pool, int &poolsize, const string& str)
@@ -140,18 +211,22 @@ void calculate_pool2(char* pool, int &poolsize, const string& str)
         }
 
         if (poolsize < max_pool_size) {
+            static const int weird_factor = 4;
             const int blah_factor = 30 - poolsize;
             temppool[poolsize] = pool[poolsize] = *iter;
             int new_pool_size = calc_pool_print_size(pool, poolsize+1);
             int cost = abs(pool[newpos]-*iter)+abs(newpos-cur_pos);
             int pool_size_diff = (new_pool_size-cur_pool_size);
 
-            pool_size_diff += abs(poolsize-cur_pos) + 4 - excess;
+            pool_size_diff += abs(poolsize-cur_pos) + weird_factor - excess;
 
-//            fprintf(stderr,"'%c': cost = %d; pool_size_diff = %d\n",*iter,cost, pool_size_diff);
-
+#if VERBOSE_DEBUG
+            fprintf(stderr,"'%c': cost = %d; pool_size_diff = %d\n",*iter,cost, pool_size_diff);
+#endif
             if (cost > pool_size_diff ) {
-//                fprintf(stderr," >>> New slot\n");
+#if VERBOSE_DEBUG
+                fprintf(stderr," >>> New slot\n");
+#endif
                 newpos = poolsize++;
                 excess = 0;
                 cur_pool_size = new_pool_size;
@@ -165,7 +240,9 @@ void calculate_pool2(char* pool, int &poolsize, const string& str)
 		temppool[cur_pos]+=*iter-temppool[cur_pos];
 	}
 
-//    fprintf(stderr," ::: Pool Size = %d\n", poolsize);
+#if VERBOSE_DEBUG
+    fprintf(stderr," <<< Pool Size = %d\n", poolsize);
+#endif
 }
 
 // This is the old broken pool calculator
@@ -279,19 +356,12 @@ string str2bf(const string& str)
 //	calculate_pool(pool,poolsize,str);
 	calculate_pool2(pool,poolsize,str);
 
+
 	int mult(find_optimal_mult(pool,poolsize));
 
-	// Output the pool
-	ret+=bf_add_value(mult)+"[-";
-	for(int i=0;i<poolsize;i++)
-	{
-		ret+=bf_move_ptr(1);
-		pool[i]=(pool[i]+mult/2)/mult;
-		ret+=bf_add_value(pool[i]);
-		pool[i]*=mult;
-	}
-	ret+=bf_move_ptr(-poolsize)+"]";
-	ret+=bf_move_ptr(1);
+    pool_round(pool, poolsize, mult);
+    ret += bf_print_pool(pool, poolsize, mult);
+
 
 	string::const_iterator iter;
 	for(iter=str.begin();iter!=str.end();++iter)
