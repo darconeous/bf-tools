@@ -9,8 +9,10 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
 
 #define PRINT_BFOPS_AT_EXIT		(1)
 //#define DISABLE_OPTIMIZATION	(1)
@@ -166,7 +168,7 @@ int optimize(bfop* begin, bfop* end)
 int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
 	unsigned int data[MAX_DATA_SIZE]={0};
-	unsigned int stack[1024]={0};
+	unsigned int stack[MAX_DEPTH]={0};
 //	unsigned int data_mask=DEFAULT_MASK;
 	unsigned int depth=0;			// Depth tracker
 	unsigned int pc=0;				// Program counter
@@ -336,7 +338,7 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
 	unsigned int data[MAX_DATA_SIZE]={0};
-	unsigned int stack[1024]={0};
+	unsigned int stack[MAX_DEPTH]={0};
 	unsigned int depth=0;			// Depth tracker
 	unsigned int pc=0;				// Program counter
 	unsigned int di=0;				// data index
@@ -596,7 +598,7 @@ void print_help()
 	printf("\n");
 	for(i=0;args[i].arg!=NULL;i++)
 	{
-		printf(" %s %s%s\n",args[i].arg,"                "+strlen(args[i].arg),args[i].desc);
+		printf(" %s %s%s\n",args[i].arg,&"                "[strlen(args[i].arg)],args[i].desc);
 	}
 }
 
