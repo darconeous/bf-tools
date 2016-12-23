@@ -14,8 +14,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#define PRINT_BFOPS_AT_EXIT     (1)
-//#define DISABLE_OPTIMIZATION	(1)
+#define PRINT_BFOPS_AT_EXIT           (1)
+#define DISABLE_RUNTIME_BOUNDS_CHECKS (1)
+//#define DISABLE_OPTIMIZATION        (1)
 
 //#define DEFAULT_MASK			(0x000000FF)	// 8-bit
 //#define DEFAULT_MASK			(0x0000FFFF)	// 16-bit
@@ -24,6 +25,8 @@
 #define MAX_PROG_SIZE           (65536 * 4)
 #define MAX_DATA_SIZE           (65536 * 8)
 #define MAX_DEPTH               (1024)
+
+#define OPT_TABLE_WIDTH         (1024)
 
 #define ERROR_FILE              (-1)
 #define ERROR_UNSYMETRIC        (-2)
@@ -37,13 +40,14 @@
 
 #define PRINT_DEBUG_INFO()  fprintf(stderr, "debug: pc=%04u di=%04u depth=%04u tic=%llu\n", pc, di, depth, tic)
 
-#define INST_SET_CONST              'Z' // [-]
+#define INST_SET_CONST          'Z' // [-]
 #define INST_SEEK_NZERO         'S'     // [>] OR [<]
 #define INST_ADD_DATA           'A'     // [<+>-] OR [-<+>]
 
 #define INST_INC_PTR            '+'
 #define INST_INC_DATA           '>'
 #define INST_SLEEP              's'
+#define INST_NOOP               '0'
 
 #define SLEEP_MULTIPLIER        (sleep_multiplier)
 
@@ -65,21 +69,23 @@ int eof_character = NO_CHANGE_ON_EOF;
 
 /* FUNCTIONS */
 
-// Optimize a given set of BF operations
+// Optimize a given set of BF operations.
+// Returns the number of bfops that have been removed.
 int optimize(bfop* begin, bfop* end)
 {
-#define OPT_TABLE_WIDTH     (1024 * 8)
-#define SLEEP_BIT           (1 << 30)
-#define SET_BIT             (1 << 29)
+#define SLEEP_BIT           (1 << 0)
+#define SET_BIT             (1 << 1)
 	bfop* iter;
 	int balance = 0;
 	int m = 0;
 	int _table[OPT_TABLE_WIDTH] = { 0 };
+	char _table_flags[OPT_TABLE_WIDTH] = { 0 };
 	int* table = _table + OPT_TABLE_WIDTH / 2;
+	char* table_flags = _table_flags + OPT_TABLE_WIDTH / 2;
 	int i;
-	int stages = 0;
 	int sleep_flag = 0;
 
+	// Optimize simple traversals.
 	if (end - begin == 3 && begin[1].op == '>') {
 		begin->op = INST_SEEK_NZERO;
 		begin->count = begin[1].count;
@@ -88,83 +94,150 @@ int optimize(bfop* begin, bfop* end)
 	}
 
 	for (iter = begin + 1; iter != end - 1; iter++) {
-		if (!(iter->op == '+' || iter->op == '>' || iter->op == INST_SET_CONST)) {
+		if ( iter->op != '+'
+		  && iter->op != '>'
+		  && iter->op != INST_SET_CONST
+		) {
+			// Can't optimize this pattern.
 			return 0;
 		}
+
 		if (iter->op == INST_SET_CONST) {
+			// This loop might include some sort of sleep.
 			sleep_flag = 1;
 		}
+
 		if (iter->op == '>') {
 			balance += iter->count;
 		}
 	}
 
-	if (balance) {
+	if (balance != 0) {
+		// This is a complex traversal. We don't try to optimize these.
 		return 0;
 	}
 
+	// Build our table
 	for (iter = begin + 1; iter < end - 1; iter++) {
-		if (iter->op == '+') {
-			table[m] += iter->count;
-		}
-
-		if (iter->op == INST_SET_CONST && (iter + 1)->op == INST_SET_CONST && (iter + 1)->count == 0) {
-			table[m] = abs(iter->count) | SLEEP_BIT;
-			sleep_flag = 0;
-			iter++;
-		}else
-		if (iter->op == INST_SET_CONST) {
-			table[m] = abs(iter->count) | SET_BIT;
-		}
 		if (iter->op == '>') {
 			m += iter->count;
+
+			if (abs(m) > OPT_TABLE_WIDTH/2) {
+				// We can't optimize this because we've run out of
+				// table space.
+				return 0;
+			}
+		}
+
+		if (iter->op == '+') {
+			table[m] += iter->count;
+			table_flags[m] = 0;
+		}
+
+		if (iter->op == INST_SET_CONST) {
+			if ( (iter + 1)->op == INST_SET_CONST
+			  && (iter + 1)->count == 0
+			  && iter->arg2 == (iter + 1)->arg2
+			) {
+				table[m] = abs(iter->count);
+				table_flags[m] = SLEEP_BIT;
+				sleep_flag = 0;
+
+				// Skip the next instruction.
+				iter++;
+			} else {
+				table[m] = iter->count;
+				table_flags[m] = SET_BIT;
+			}
 		}
 	}
 
 	if (sleep_flag) {
+		// We had some SET_CONST instructions, but
+		// they weren't sleep-related, so this is
+		// likely to be more complicated than we
+		// should handle.
 		return 0;
 	}
 
-	iter = begin;
+	// This whole optimization is only for linear loops
+	// where we are iterating through the loop one
+	// iteration at a time (either positive or negative).
+	// If that isn't what we are doing here, we should
+	// skip doing any optimization.
 	if (abs(table[0]) != 1) {
 		return 0;
 	}
+
+	// Start rewriting the instructions.
+	iter = begin;
 	for (i = 0; i < OPT_TABLE_WIDTH; i++) {
-		if (!_table[i] || i == OPT_TABLE_WIDTH / 2) {
+		if (i == OPT_TABLE_WIDTH / 2) {
 			continue;
 		}
-		if (_table[i] > 0 && (_table[i] & SLEEP_BIT)) {
+
+		iter->arg2 = i - OPT_TABLE_WIDTH / 2;
+		iter->count = _table[i];
+
+		if (_table_flags[i] & SLEEP_BIT) {
 			iter->op = INST_SLEEP;
-			iter->count = _table[i] & (~SLEEP_BIT);
-			iter->arg2 = i - OPT_TABLE_WIDTH / 2;
-		}else
-		if (_table[i] > 0 && (_table[i] & SET_BIT)) {
+
+		} else if (_table_flags[i] & SET_BIT) {
 			iter->op = INST_SET_CONST;
-			iter->count = _table[i] & (~SET_BIT);
-			iter->arg2 = i - OPT_TABLE_WIDTH / 2;
-		} else {
+
+		} else if (_table[i] != 0) {
 			iter->op = INST_ADD_DATA;
-			iter->count = _table[i];
-			iter->arg2 = i - OPT_TABLE_WIDTH / 2;
+
+		} else {
+			continue;
 		}
+
 		iter++;
-		stages++;
 	}
+
+	// One last instruction to clear our multiplier.
 	iter->op = INST_SET_CONST;
 	iter->count = 0;
 	iter->arg2 = 0;
 	iter++;
+
 	return end - iter;
 }
+
+#if DISABLE_RUNTIME_BOUNDS_CHECKS
+#define BOUNDS_CHECK_DI_ARG2() do { } while (0)
+#define BOUNDS_CHECK_DI_COUNT() do { } while (0)
+#else
+#define BOUNDS_CHECK_DI_ARG2() \
+			do { if (di >= MAX_DATA_SIZE - (prog[pc].arg2)) { \
+				fprintf(stderr, "error: Data pointer overflow\n"); \
+				PRINT_DEBUG_INFO(); \
+				return ERROR_DATA_OVERFLOW; \
+            } else if ((signed)di < -prog[pc].arg2) { \
+				fprintf(stderr, "error: Data pointer underflow\n"); \
+				PRINT_DEBUG_INFO(); \
+				return ERROR_DATA_UNDERFLOW; \
+			} } while (0)
+
+#define BOUNDS_CHECK_DI_COUNT() \
+			do { if (di >= MAX_DATA_SIZE - (prog[pc].count)) { \
+				fprintf(stderr, "error: Data pointer overflow\n"); \
+				PRINT_DEBUG_INFO(); \
+				return ERROR_DATA_OVERFLOW; \
+            } else if ((signed)di < -prog[pc].count) { \
+				fprintf(stderr, "error: Data pointer underflow\n"); \
+				PRINT_DEBUG_INFO(); \
+				return ERROR_DATA_UNDERFLOW; \
+			} } while (0)
+#endif
 
 int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
 	unsigned int data[MAX_DATA_SIZE] = { 0 };
 	unsigned int stack[MAX_DEPTH] = { 0 };
-//	unsigned int data_mask=DEFAULT_MASK;
 	unsigned int depth = 0;     // Depth tracker
 	unsigned int pc = 0;        // Program counter
-	unsigned int di = 0;        // data index
+	int di = 0;                 // data index
 	bfop* prog = begin;
 	int time_start = 0;         // value of clock() at start of execution
 	unsigned long long tic = 0; // Total number of instructions executed
@@ -173,13 +246,8 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 
 	while (prog[pc].op) {
 		switch (prog[pc].op) {
-		case INST_SET_CONST:
-			tic += data[di] * 3 + prog[pc].count;
-
-			data[di + prog[pc].arg2] = prog[pc].count;
-			break;
-
 		case INST_SLEEP:
+			BOUNDS_CHECK_DI_ARG2();
 			tic += prog[pc].count * data[di];
 			{
 				const int c = clock();
@@ -191,17 +259,8 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 			break;
 
 		case INST_SEEK_NZERO:
-			while (data[di]) {
-				if (di >= MAX_DATA_SIZE - (prog[pc].count)) {
-					fprintf(stderr, "error: Data pointer overflow (prog[pc].count=%d)\n", prog[pc].count);
-					PRINT_DEBUG_INFO();
-					return ERROR_DATA_OVERFLOW;
-				}else
-				if ((signed)di < -prog[pc].count) {
-					fprintf(stderr, "error: Data pointer underflow on INST_SEEK_NZERO (prog[pc].count=%d)\n", prog[pc].count);
-					PRINT_DEBUG_INFO();
-					return ERROR_DATA_UNDERFLOW;
-				}
+			while (data[di] & data_mask) {
+				BOUNDS_CHECK_DI_COUNT();
 				di += prog[pc].count;
 				tic += 2 + abs(prog[pc].count);
 			}
@@ -209,24 +268,22 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 			break;
 
 		case INST_ADD_DATA:
-			if (di >= MAX_DATA_SIZE - (prog[pc].arg2)) {
-				fprintf(stderr, "error: Data pointer overflow\n");
-				PRINT_DEBUG_INFO();
-				return ERROR_DATA_OVERFLOW;
-			}else
-			if ((signed)di < -prog[pc].arg2) {
-				pc++;
-				continue;
-
-				fprintf(stderr, "error: Data pointer underflow on INST_ADD_DATA\n");
-				PRINT_DEBUG_INFO();
-				return ERROR_DATA_UNDERFLOW;
+			if (!(data[di] & data_mask)) {
+				break;
 			}
+			BOUNDS_CHECK_DI_ARG2();
 
 			tic += data[di] * ((abs(prog[pc].arg2)) * 2 + 1 + abs(prog[pc].count));
-
 			data[di + prog[pc].arg2] += data[di] * (prog[pc].count);
 			break;
+
+		case INST_SET_CONST:
+			BOUNDS_CHECK_DI_ARG2();
+			tic += data[di] * 3 + prog[pc].count;
+
+			data[di + prog[pc].arg2] = prog[pc].count;
+			break;
+
 
 		case '+':
 			data[di] += prog[pc].count;
@@ -234,12 +291,12 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 			break;
 
 		case '>':
+			BOUNDS_CHECK_DI_COUNT();
 			if (di >= MAX_DATA_SIZE - (prog[pc].count)) {
 				fprintf(stderr, "error: Data pointer overflow (prog[pc].count=%d)\n", prog[pc].count);
 				PRINT_DEBUG_INFO();
 				return ERROR_DATA_OVERFLOW;
-			}else
-			if ((signed)di < -prog[pc].count) {
+			} else if ((signed)di < -prog[pc].count) {
 				fprintf(stderr, "error: Data pointer underflow on '>' (prog[pc].count=%d)\n", prog[pc].count);
 				PRINT_DEBUG_INFO();
 				return ERROR_DATA_UNDERFLOW;
@@ -317,59 +374,46 @@ int execute(bfop* begin, bfop* end, FILE* in, FILE* out)
 	return data[di];
 }
 
+// Same as above but without BFOPS calculation
 int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
 {
 	unsigned int data[MAX_DATA_SIZE] = { 0 };
 	unsigned int stack[MAX_DEPTH] = { 0 };
 	unsigned int depth = 0;             // Depth tracker
 	unsigned int pc = 0;                // Program counter
-	unsigned int di = 0;                // data index
+	int di = 0;                         // data index
+	unsigned long long tic = 0;         // Placeholder
 	bfop* prog = begin;
 
 	while (prog[pc].op) {
 		switch (prog[pc].op) {
-		case INST_SET_CONST:
-			data[di + prog[pc].arg2] = prog[pc].count;
-			break;
-
 		case INST_SLEEP:
-		{
-			const int c = clock();
+			BOUNDS_CHECK_DI_ARG2();
 			usleep((int)(prog[pc].count * data[di] * SLEEP_MULTIPLIER));
-		}
 			data[di + prog[pc].arg2] = 0;
 
 			break;
 
 		case INST_SEEK_NZERO:
-			while (data[di]) {
-				if (di >= MAX_DATA_SIZE - (prog[pc].count)) {
-					fprintf(stderr, "error: Data pointer overflow (prog[pc].count=%d)\n", prog[pc].count);
-					return ERROR_DATA_OVERFLOW;
-				}else
-				if ((signed)di < -prog[pc].count) {
-					fprintf(stderr, "error: Data pointer underflow on INST_SEEK_NZERO (prog[pc].count=%d)\n", prog[pc].count);
-					return ERROR_DATA_UNDERFLOW;
-				}
+			while (data[di] & data_mask) {
+				BOUNDS_CHECK_DI_COUNT();
 				di += prog[pc].count;
 			}
 
 			break;
 
 		case INST_ADD_DATA:
-			if (di >= MAX_DATA_SIZE - (prog[pc].arg2)) {
-				fprintf(stderr, "error: Data pointer overflow\n");
-				return ERROR_DATA_OVERFLOW;
-			}else
-			if ((signed)di < -prog[pc].arg2) {
-				pc++;
-				continue;
-
-				fprintf(stderr, "error: Data pointer underflow on INST_ADD_DATA\n");
-				return ERROR_DATA_UNDERFLOW;
+			if (!(data[di] & data_mask)) {
+				break;
 			}
 
+			BOUNDS_CHECK_DI_ARG2();
 			data[di + prog[pc].arg2] += data[di] * (prog[pc].count);
+			break;
+
+		case INST_SET_CONST:
+			BOUNDS_CHECK_DI_ARG2();
+			data[di + prog[pc].arg2] = prog[pc].count;
 			break;
 
 		case '+':
@@ -377,14 +421,8 @@ int execute_fast(bfop* begin, bfop* end, FILE* in, FILE* out)
 			break;
 
 		case '>':
-			if (di >= MAX_DATA_SIZE - (prog[pc].count)) {
-				fprintf(stderr, "error: Data pointer overflow (prog[pc].count=%d)\n", prog[pc].count);
-				return ERROR_DATA_OVERFLOW;
-			}else
-			if ((signed)di < -prog[pc].count) {
-				fprintf(stderr, "error: Data pointer underflow on '>' (prog[pc].count=%d)\n", prog[pc].count);
-				return ERROR_DATA_UNDERFLOW;
-			}
+			BOUNDS_CHECK_DI_COUNT();
+
 			di += prog[pc].count;
 			break;
 
@@ -475,14 +513,18 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 			break;
 
 		case INST_SEEK_NZERO:
-			fprintf(out, "\twhile(*dp) dp+=%d;\n", prog[pc].count);
+			fprintf(out, "\twhile (*dp) dp+=%d;\n", prog[pc].count);
 			break;
 
 		case INST_ADD_DATA:
 			if (prog[pc].count == 1) {
 				fprintf(out, "\tdp[%d]\t+= dp[0];\n", prog[pc].arg2);
-			} else {
+			} else if (prog[pc].count == -1) {
+				fprintf(out, "\tdp[%d]\t-= dp[0];\n", prog[pc].arg2);
+			} else if (prog[pc].count > 0) {
 				fprintf(out, "\tdp[%d]\t+= dp[0] * %d;\n", prog[pc].arg2, prog[pc].count);
+			} else {
+				fprintf(out, "\tdp[%d]\t-= dp[0] * %d;\n", prog[pc].arg2, -prog[pc].count);
 			}
 			break;
 
@@ -491,8 +533,10 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 				fprintf(out, "\tdp[0]++;\n");
 			} else if (prog[pc].count == -1) {
 				fprintf(out, "\tdp[0]--;\n");
-			} else {
+			} else if (prog[pc].count > 0) {
 				fprintf(out, "\tdp[0]\t+= %d;\n", prog[pc].count);
+			} else {
+				fprintf(out, "\tdp[0]\t-= %d;\n", -prog[pc].count);
 			}
 			break;
 
@@ -501,8 +545,10 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 				fprintf(out, "\tdp++;\n");
 			} else if (prog[pc].count == -1) {
 				fprintf(out, "\tdp--;\n");
-			} else {
+			} else if (prog[pc].count > 0) {
 				fprintf(out, "\tdp\t+= %d;\n", prog[pc].count);
+			} else {
+				fprintf(out, "\tdp\t-= %d;\n", -prog[pc].count);
 			}
 			break;
 
@@ -522,7 +568,7 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 			flush_needed = 0;
 
 			if (!pc || prog[pc - 1].op != '[') {
-				fprintf(out, "\tif(!*dp) goto pc%04d;\n", prog[pc].arg2);
+				fprintf(out, "\tif (!*dp) goto pc%04d;\n", prog[pc].arg2);
 			}
 			fprintf(out, "pc%04d:\n", pc);
 			break;
@@ -534,7 +580,7 @@ void convert2c(bfop* begin, bfop* end, FILE* out)
 			flush_needed = 0;
 
 			if (!pc || prog[pc - 1].op != ']') {
-				fprintf(out, "\tif(*dp) goto pc%04d;\n", prog[pc].arg2);
+				fprintf(out, "\tif (*dp) goto pc%04d;\n", prog[pc].arg2);
 			}
 			fprintf(out, "pc%04d:\n", pc);
 			break;
@@ -562,7 +608,13 @@ void print_help()
 		{ "--7-bit",  "Use 7-bit data"                                                             },
 		{ "--8-bit",  "Use 8-bit data"                                                             },
 		{ "--16-bit", "Use 16-bit data"                                                            },
-		{ "-8",       "Use 8-bit data"                                                             },
+#ifndef DISABLE_OPTIMIZATION
+		{ "--no-optimization", "Disable optimization"                                              },
+#else
+        { "--optimization",    "Enable optimization"                                               },
+		{ "-O",                "Enable optimization"                                               },
+#endif
+        { "-8",       "Use 8-bit data"                                                             },
 		{ "-7",       "Use 7-bit data"                                                             },
 		{ "-c",       "Convert BF program to C"                                                    },
 		{ "-p",       "Print out bfops at exit"                                                    },
@@ -577,7 +629,7 @@ void print_help()
 	printf(usage, "bf");
 	printf("\n");
 	for (i = 0; args[i].arg != NULL; i++) {
-		printf(" %s %s%s\n", args[i].arg, &"                "[strlen(args[i].arg)], args[i].desc);
+		printf(" %s %s%s\n", args[i].arg, &"                      "[strlen(args[i].arg)], args[i].desc);
 	}
 }
 
@@ -587,12 +639,16 @@ main(int argc, char* argv[])
 	FILE* progin = stdin;
 	FILE* in = stdin;
 	FILE* out = stdout;
-	bfop prog[MAX_PROG_SIZE] = { { 0 } };
-	//unsigned int data[MAX_DATA_SIZE]={0};
-	unsigned int stack[1024] = { 0 };
+	unsigned int stack[MAX_DEPTH] = { 0 };
 	unsigned int depth = 0;     // Depth tracker
 	unsigned int pc = 0;        // Program counter
 	unsigned int di = 0;        // data index
+
+#ifndef DISABLE_OPTIMIZATION
+	int do_optimization = 1;
+#else
+	int do_optimization = 0;
+#endif
 
 	unsigned long long tic = 0; // Total number of instructions executed
 	int time_start = 0;         // value of clock() at start of execution
@@ -601,6 +657,13 @@ main(int argc, char* argv[])
 	int i;
 	int file_count = 0;
 	int loop = 0;
+
+	bfop *prog = calloc(MAX_PROG_SIZE, sizeof(bfop));
+
+	if (!prog) {
+		perror("calloc");
+		exit(EXIT_FAILURE);
+	}
 
 	/*
 	   --	** -- P R O C E S S   A R G U M E N T S -------------------------------------------------------
@@ -622,17 +685,23 @@ main(int argc, char* argv[])
 			if (strcmp(argv[i] + 2, "help") == 0) {
 				print_help();
 				return ERROR_HELP;
-			}else
-			if (strcmp(argv[i] + 2, "16-bit") == 0) {
+
+			} else if (strcmp(argv[i] + 2, "16-bit") == 0) {
 				data_mask = 0x0000FFFF;
-			} else
-			if (strcmp(argv[i] + 2, "8-bit") == 0) {
+
+			} else if (strcmp(argv[i] + 2, "8-bit") == 0) {
 				data_mask = 0x000000FF;
-			} else
-			if (strcmp(argv[i] + 2, "7-bit") == 0) {
+
+			} else if (strcmp(argv[i] + 2, "7-bit") == 0) {
 				data_mask = 0x0000007F;
-			} else
-			if (strcmp(argv[i] + 2, "print-bfops") == 0) {
+
+			} else if (strcmp(argv[i] + 2, "optimization") == 0) {
+				do_optimization = 1;
+
+			} else if (strcmp(argv[i] + 2, "no-optimization") == 0) {
+				do_optimization = 0;
+
+			} else if (strcmp(argv[i] + 2, "print-bfops") == 0) {
 				print_bfops_at_exit = 1;
 			}
 		}else if (argv[i][0] == '-') {
@@ -648,6 +717,9 @@ main(int argc, char* argv[])
 					break;
 				case '7':
 					data_mask = 0x0000007F;
+					break;
+				case 'O':
+					do_optimization = 1;
 					break;
 				case 'c':
 					bf2c_mode = 1;
@@ -738,12 +810,15 @@ main(int argc, char* argv[])
 		prog[pc].arg2 = 0;
 		switch (prog[pc].op) {
 		case '-':
+			prog[pc].op = '+';
 		case '<':
-			prog[pc].op = prog[pc].op == '-' ? '+' : '>';
-			if (pc && prog[pc].op == '-' && prog[pc - 1].op == INST_SET_CONST) {
+			if (prog[pc].op == '<') {
+				prog[pc].op = '>';
+			}
+
+			if (do_optimization && pc && prog[pc].op == '+' && prog[pc - 1].op == INST_SET_CONST) {
 				prog[pc - 1].count--;
-			} else
-			if (pc && prog[pc].op == prog[pc - 1].op) {
+			} else if (do_optimization && pc && prog[pc].op == prog[pc - 1].op) {
 				prog[pc - 1].count--;
 				if (prog[pc - 1].count == 0) {
 					pc--;
@@ -755,13 +830,11 @@ main(int argc, char* argv[])
 			}
 			break;
 
-
 		case '+':
 		case '>':
-			if (pc && prog[pc].op == '+' && prog[pc - 1].op == INST_SET_CONST) {
+			if (do_optimization && pc && prog[pc].op == '+' && prog[pc - 1].op == INST_SET_CONST) {
 				prog[pc - 1].count++;
-			} else
-			if (pc && prog[pc].op == prog[pc - 1].op) {
+			} else if (do_optimization && pc && prog[pc].op == prog[pc - 1].op) {
 				prog[pc - 1].count++;
 				if (prog[pc - 1].count == 0) {
 					pc--;
@@ -781,6 +854,10 @@ main(int argc, char* argv[])
 			break;
 
 		case '[':
+			if (depth >= MAX_DEPTH) {
+				fprintf(stderr, "error: Program exceeded max stack depth (Max stack depth: %d)\n", MAX_DEPTH);
+				return ERROR_STACK_OVERFLOW;
+			}
 			prog[pc].count = 0;
 			prog[pc].arg2 = 0;
 			stack[depth++] = pc;
@@ -788,18 +865,21 @@ main(int argc, char* argv[])
 			break;
 
 		case ']':
+			if (depth == 0) {
+				fprintf(stderr, "error: Stack underflow (Unmatched ']')\n");
+				return ERROR_UNSYMETRIC;
+			}
 			depth--;
 			prog[pc].arg2 = stack[depth];
 			prog[stack[depth]].arg2 = pc;
 
-#ifndef DISABLE_OPTIMIZATION
-			{
+			if (do_optimization) {
 				int opt_change = optimize(prog + stack[depth], prog + pc + 1);
 				if (opt_change) {
 					pc -= opt_change;
 				}
 			}
-#endif
+
 			pc++;
 			break;
 
